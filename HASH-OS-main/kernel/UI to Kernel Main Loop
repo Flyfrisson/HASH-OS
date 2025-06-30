@@ -1,0 +1,14 @@
+#include "../ui/ui_manager.h"
+
+void kernel_main() {
+    init_drivers();
+    init_ui();
+
+    while (1) {
+        struct TouchEvent touch = get_touch_event();
+
+        if (touch.touched) {
+            handle_touch_event(touch.x, touch.y);
+        }
+    }
+}

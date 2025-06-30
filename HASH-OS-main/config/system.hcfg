@@ -1,0 +1,498 @@
+// system.hcfg - HASH OS System Configuration File
+/*
+# =========================================
+#  HASH OS OFFICIAL SYSTEM CONFIGURATION 
+# =========================================
+[BOOT]
+message:  Booting HASH OS...
+timeout: 3s
+[KERNEL]
+stack_size: 4096b
+max_threads: 16
+scheduler: hash-round
+[UI]
+theme: hash-dark
+font: hash-mono
+resolution: 800x600
+[DRIVERS]
+keyboard: enabled
+display: enabled
+storage: disabled
+# =========================================
+#  HASH OS CONFIG FILE | DO NOT MODIFY 
+# =========================================
+*/
+
+// config.h - Configuration system header
+#ifndef HASHOS_CONFIG_H
+#define HASHOS_CONFIG_H
+
+#define MAX_CONFIG_LINE 256
+#define MAX_CONFIG_VALUE 128
+#define MAX_CONFIG_KEY 64
+#define MAX_SECTION_NAME 32
+
+// Configuration sections
+typedef enum {
+    SECTION_NONE = 0,
+    SECTION_BOOT,
+    SECTION_KERNEL,
+    SECTION_UI,
+    SECTION_DRIVERS
+} ConfigSection;
+
+// Boot configuration
+typedef struct {
+    char message[MAX_CONFIG_VALUE];
+    unsigned int timeout_seconds;
+} BootConfig;
+
+// Kernel configuration
+typedef struct {
+    unsigned int stack_size;
+    unsigned int max_threads;
+    char scheduler[MAX_CONFIG_VALUE];
+} KernelConfig;
+
+// UI configuration
+typedef struct {
+    char theme[MAX_CONFIG_VALUE];
+    char font[MAX_CONFIG_VALUE];
+    unsigned int width;
+    unsigned int height;
+} UIConfig;
+
+// Driver configuration
+typedef struct {
+    unsigned char keyboard_enabled;
+    unsigned char display_enabled;
+    unsigned char storage_enabled;
+} DriverConfig;
+
+// Main system configuration structure
+typedef struct {
+    BootConfig boot;
+    KernelConfig kernel;
+    UIConfig ui;
+    DriverConfig drivers;
+} SystemConfig;
+
+// Function prototypes
+void InitConfig(void);
+int LoadConfig(const char* config_data);
+int ParseConfigLine(const char* line, ConfigSection* current_section);
+void ApplyConfig(void);
+void PrintConfig(void);
+SystemConfig* GetSystemConfig(void);
+
+// Utility functions
+int ParseTimeout(const char* value);
+int ParseSize(const char* value);
+int ParseResolution(const char* value, unsigned int* width, unsigned int* height);
+int ParseBoolean(const char* value);
+
+#endif // HASHOS_CONFIG_H
+
+// config.c - Configuration system implementation
+#include "config.h"
+#include "display.h" // Assuming we have the display driver
+
+// Global system configuration
+static SystemConfig system_config;
+
+// String utility functions
+static int strlen(const char* str) {
+    int len = 0;
+    while (str[len]) len++;
+    return len;
+}
+
+static int strcmp(const char* s1, const char* s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
+static int strncmp(const char* s1, const char* s2, int n) {
+    while (n && *s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+        n--;
+    }
+    if (n == 0) return 0;
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
+static void strcpy(char* dest, const char* src) {
+    while (*src) {
+        *dest++ = *src++;
+    }
+    *dest = '\0';
+}
+
+static void strncpy(char* dest, const char* src, int n) {
+    while (n && *src) {
+        *dest++ = *src++;
+        n--;
+    }
+    while (n) {
+        *dest++ = '\0';
+        n--;
+    }
+}
+
+static char* strchr(const char* str, int c) {
+    while (*str) {
+        if (*str == c) return (char*)str;
+        str++;
+    }
+    return (*str == c) ? (char*)str : 0;
+}
+
+// Remove leading and trailing whitespace
+static void trim(char* str) {
+    char* start = str;
+    char* end;
+    
+    // Trim leading space
+    while (*start == ' ' || *start == '\t') start++;
+    
+    // All spaces?
+    if (*start == 0) {
+        *str = 0;
+        return;
+    }
+    
+    // Trim trailing space
+    end = start + strlen(start) - 1;
+    while (end > start && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) {
+        end--;
+    }
+    
+    // Write new null terminator
+    *(end + 1) = 0;
+    
+    // Move trimmed string to beginning
+    if (start != str) {
+        while (*start) {
+            *str++ = *start++;
+        }
+        *str = 0;
+    }
+}
+
+void InitConfig(void) {
+    // Initialize with default values
+    strcpy(system_config.boot.message, "Booting HASH OS...");
+    system_config.boot.timeout_seconds = 3;
+    
+    system_config.kernel.stack_size = 4096;
+    system_config.kernel.max_threads = 16;
+    strcpy(system_config.kernel.scheduler, "hash-round");
+    
+    strcpy(system_config.ui.theme, "hash-dark");
+    strcpy(system_config.ui.font, "hash-mono");
+    system_config.ui.width = 800;
+    system_config.ui.height = 600;
+    
+    system_config.drivers.keyboard_enabled = 1;
+    system_config.drivers.display_enabled = 1;
+    system_config.drivers.storage_enabled = 0;
+}
+
+int ParseTimeout(const char* value) {
+    int result = 0;
+    const char* ptr = value;
+    
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = result * 10 + (*ptr - '0');
+        ptr++;
+    }
+    
+    return result;
+}
+
+int ParseSize(const char* value) {
+    int result = 0;
+    const char* ptr = value;
+    
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = result * 10 + (*ptr - '0');
+        ptr++;
+    }
+    
+    // Handle 'b' suffix for bytes (default), 'k' for KB, 'm' for MB
+    if (*ptr == 'k' || *ptr == 'K') {
+        result *= 1024;
+    } else if (*ptr == 'm' || *ptr == 'M') {
+        result *= 1024 * 1024;
+    }
+    
+    return result;
+}
+
+int ParseResolution(const char* value, unsigned int* width, unsigned int* height) {
+    const char* ptr = value;
+    int w = 0, h = 0;
+    
+    // Parse width
+    while (*ptr >= '0' && *ptr <= '9') {
+        w = w * 10 + (*ptr - '0');
+        ptr++;
+    }
+    
+    // Skip 'x' separator
+    if (*ptr == 'x' || *ptr == 'X') {
+        ptr++;
+    } else {
+        return 0; // Invalid format
+    }
+    
+    // Parse height
+    while (*ptr >= '0' && *ptr <= '9') {
+        h = h * 10 + (*ptr - '0');
+        ptr++;
+    }
+    
+    *width = w;
+    *height = h;
+    return 1;
+}
+
+int ParseBoolean(const char* value) {
+    if (strcmp(value, "enabled") == 0 || strcmp(value, "true") == 0 || strcmp(value, "1") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+int ParseConfigLine(const char* line, ConfigSection* current_section) {
+    char work_line[MAX_CONFIG_LINE];
+    char key[MAX_CONFIG_KEY];
+    char value[MAX_CONFIG_VALUE];
+    char* colon_pos;
+    
+    // Copy line to work buffer
+    strncpy(work_line, line, MAX_CONFIG_LINE - 1);
+    work_line[MAX_CONFIG_LINE - 1] = '\0';
+    trim(work_line);
+    
+    // Skip empty lines and comments
+    if (work_line[0] == '\0' || work_line[0] == '#') {
+        return 1;
+    }
+    
+    // Check for section headers
+    if (work_line[0] == '[') {
+        if (strncmp(work_line, "[BOOT]", 6) == 0) {
+            *current_section = SECTION_BOOT;
+        } else if (strncmp(work_line, "[KERNEL]", 8) == 0) {
+            *current_section = SECTION_KERNEL;
+        } else if (strncmp(work_line, "[UI]", 4) == 0) {
+            *current_section = SECTION_UI;
+        } else if (strncmp(work_line, "[DRIVERS]", 9) == 0) {
+            *current_section = SECTION_DRIVERS;
+        } else {
+            *current_section = SECTION_NONE;
+        }
+        return 1;
+    }
+    
+    // Parse key-value pairs
+    colon_pos = strchr(work_line, ':');
+    if (!colon_pos) {
+        return 0; // Invalid line format
+    }
+    
+    // Extract key
+    *colon_pos = '\0';
+    strcpy(key, work_line);
+    trim(key);
+    
+    // Extract value
+    strcpy(value, colon_pos + 1);
+    trim(value);
+    
+    // Apply configuration based on current section
+    switch (*current_section) {
+        case SECTION_BOOT:
+            if (strcmp(key, "message") == 0) {
+                strncpy(system_config.boot.message, value, MAX_CONFIG_VALUE - 1);
+            } else if (strcmp(key, "timeout") == 0) {
+                system_config.boot.timeout_seconds = ParseTimeout(value);
+            }
+            break;
+            
+        case SECTION_KERNEL:
+            if (strcmp(key, "stack_size") == 0) {
+                system_config.kernel.stack_size = ParseSize(value);
+            } else if (strcmp(key, "max_threads") == 0) {
+                system_config.kernel.max_threads = ParseTimeout(value); // Reuse number parser
+            } else if (strcmp(key, "scheduler") == 0) {
+                strncpy(system_config.kernel.scheduler, value, MAX_CONFIG_VALUE - 1);
+            }
+            break;
+            
+        case SECTION_UI:
+            if (strcmp(key, "theme") == 0) {
+                strncpy(system_config.ui.theme, value, MAX_CONFIG_VALUE - 1);
+            } else if (strcmp(key, "font") == 0) {
+                strncpy(system_config.ui.font, value, MAX_CONFIG_VALUE - 1);
+            } else if (strcmp(key, "resolution") == 0) {
+                ParseResolution(value, &system_config.ui.width, &system_config.ui.height);
+            }
+            break;
+            
+        case SECTION_DRIVERS:
+            if (strcmp(key, "keyboard") == 0) {
+                system_config.drivers.keyboard_enabled = ParseBoolean(value);
+            } else if (strcmp(key, "display") == 0) {
+                system_config.drivers.display_enabled = ParseBoolean(value);
+            } else if (strcmp(key, "storage") == 0) {
+                system_config.drivers.storage_enabled = ParseBoolean(value);
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    return 1;
+}
+
+int LoadConfig(const char* config_data) {
+    ConfigSection current_section = SECTION_NONE;
+    char line[MAX_CONFIG_LINE];
+    const char* ptr = config_data;
+    int line_start = 0;
+    int i = 0;
+    
+    while (*ptr) {
+        if (*ptr == '\n' || *ptr == '\0') {
+            // Extract line
+            int line_len = i - line_start;
+            if (line_len >= MAX_CONFIG_LINE) line_len = MAX_CONFIG_LINE - 1;
+            
+            strncpy(line, config_data + line_start, line_len);
+            line[line_len] = '\0';
+            
+            // Parse line
+            if (!ParseConfigLine(line, &current_section)) {
+                return 0; // Parse error
+            }
+            
+            line_start = i + 1;
+        }
+        
+        if (*ptr) ptr++;
+        i++;
+    }
+    
+    return 1;
+}
+
+void ApplyConfig(void) {
+    // Apply boot configuration
+    PutString("Applying system configuration...\n");
+    
+    // Apply kernel configuration
+    // (In a real OS, this would configure the kernel)
+    
+    // Apply UI configuration
+    // (In a real OS, this would set up graphics mode)
+    
+    // Apply driver configuration
+    if (!system_config.drivers.display_enabled) {
+        PutString("Warning: Display driver disabled in config!\n");
+    }
+    
+    PutString("Configuration applied successfully.\n");
+}
+
+void PrintConfig(void) {
+    PutString("=== HASH OS System Configuration ===\n");
+    
+    PutString("[BOOT]\n");
+    PutString("  Message: ");
+    PutString(system_config.boot.message);
+    PutString("\n  Timeout: ");
+    // Simple number to string conversion
+    if (system_config.boot.timeout_seconds < 10) {
+        PutChar('0' + system_config.boot.timeout_seconds);
+    } else {
+        PutChar('0' + (system_config.boot.timeout_seconds / 10));
+        PutChar('0' + (system_config.boot.timeout_seconds % 10));
+    }
+    PutString("s\n\n");
+    
+    PutString("[KERNEL]\n");
+    PutString("  Stack Size: ");
+    // Display stack size (simplified)
+    if (system_config.kernel.stack_size == 4096) {
+        PutString("4096");
+    }
+    PutString("b\n");
+    PutString("  Max Threads: ");
+    if (system_config.kernel.max_threads < 10) {
+        PutChar('0' + system_config.kernel.max_threads);
+    } else {
+        PutChar('0' + (system_config.kernel.max_threads / 10));
+        PutChar('0' + (system_config.kernel.max_threads % 10));
+    }
+    PutString("\n  Scheduler: ");
+    PutString(system_config.kernel.scheduler);
+    PutString("\n\n");
+    
+    PutString("[UI]\n");
+    PutString("  Theme: ");
+    PutString(system_config.ui.theme);
+    PutString("\n  Font: ");
+    PutString(system_config.ui.font);
+    PutString("\n  Resolution: 800x600\n\n");
+    
+    PutString("[DRIVERS]\n");
+    PutString("  Keyboard: ");
+    PutString(system_config.drivers.keyboard_enabled ? "enabled" : "disabled");
+    PutString("\n  Display: ");
+    PutString(system_config.drivers.display_enabled ? "enabled" : "disabled");
+    PutString("\n  Storage: ");
+    PutString(system_config.drivers.storage_enabled ? "enabled" : "disabled");
+    PutString("\n");
+}
+
+SystemConfig* GetSystemConfig(void) {
+    return &system_config;
+}
+
+// Example usage and test function
+void TestConfigSystem(void) {
+    const char* config_data = 
+        "# HASH OS OFFICIAL SYSTEM CONFIGURATION\n"
+        "[BOOT]\n"
+        "message: Booting HASH OS...\n"
+        "timeout: 3s\n"
+        "[KERNEL]\n"
+        "stack_size: 4096b\n"
+        "max_threads: 16\n"
+        "scheduler: hash-round\n"
+        "[UI]\n"
+        "theme: hash-dark\n"
+        "font: hash-mono\n"
+        "resolution: 800x600\n"
+        "[DRIVERS]\n"
+        "keyboard: enabled\n"
+        "display: enabled\n"
+        "storage: disabled\n";
+    
+    InitConfig();
+    
+    if (LoadConfig(config_data)) {
+        PutString("Configuration loaded successfully!\n\n");
+        PrintConfig();
+        ApplyConfig();
+    } else {
+        PutString("Failed to load configuration!\n");
+    }
+}
