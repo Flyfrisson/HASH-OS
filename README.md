@@ -18,17 +18,3 @@ HASH OS includes:
 - 🧰 Developer Tools
 - ⚙️ CI/CD Integration
 
-
-
-## 📂 Project Structure
-
-/bootloader           # Bootloader source code
-/kernel               # Microkernel core code
-/drivers              # Device drivers (keyboard, display, storage, etc.)
-/filesystem           # File system management
-/ui                   # HASH UI source code
-/apps                 # Core apps (Focus, Moments, Hub, etc.)
-/config               # Configuration files
-/scripts              # CI/CD and build automation
-/docs                 # Developer documentation and API references
-/tests                # Unit and system tests
