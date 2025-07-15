@@ -1,0 +1,72 @@
+#include "../ui/ui_manager.h"
+#include <stdint.h>
+#include <stdbool.h>
+
+// Error handling and logging
+void kernel_panic(const char* message) {
+    // Disable interrupts and halt system
+    __asm__ volatile ("cli");
+    // Log critical error (implementation depends on platform)
+    while (1) {
+        // Halt processor
+        __asm__ volatile ("hlt");
+    }
+}
+
+void kernel_log(const char* message) {
+    // Simple logging implementation
+    // In real system, this would write to serial/debug output
+}
+
+// Power management
+void cpu_yield(void) {
+    // Platform-specific CPU yield/sleep instruction
+    __asm__ volatile ("hlt"); // x86 halt until interrupt
+    // or __asm__ volatile ("wfi"); // ARM wait for interrupt
+}
+
+// Enhanced kernel main with proper error handling and power management
+void kernel_main() {
+    kernel_log("Kernel starting...");
+    
+    // Initialize drivers with error checking
+    if (init_drivers() != 0) {
+        kernel_panic("Driver initialization failed");
+        return; // Never reached, but good practice
+    }
+    kernel_log("Drivers initialized successfully");
+    
+    // Initialize UI subsystem with error checking
+    if (init_ui() != 0) {
+        kernel_panic("UI initialization failed");
+        return; // Never reached, but good practice
+    }
+    kernel_log("UI initialized successfully");
+    
+    kernel_log("Entering main event loop");
+    
+    // Main event loop with power management
+    while (1) {
+        struct TouchEvent touch = get_touch_event();
+        
+        if (touch.touched) {
+            // Validate touch coordinates
+            if (touch.x < SCREEN_WIDTH && touch.y < SCREEN_HEIGHT) {
+                handle_touch_event(touch.x, touch.y);
+            } else {
+                kernel_log("Invalid touch coordinates received");
+            }
+        } else {
+            // No touch event - yield CPU to save power
+            // This prevents 100% CPU usage in polling loop
+            cpu_yield();
+        }
+        
+        // Optional: Add watchdog timer reset here
+        // reset_watchdog();
+        
+        // Optional: Handle other system events
+        // handle_timer_events();
+        // handle_system_interrupts();
+    }
+}
